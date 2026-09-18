@@ -75,7 +75,7 @@ Running `op signin` inside `.envrc` does not work, as there is no terminal to ty
 
 Every `op` invocation costs roughly a second, and almost none of it is the secret. `op --debug read` shows three server requests — `GET /api/v2/overview`, `GET /api/v3/account` and `POST /api/v3/user/itemusage`, about 720ms together — while the item itself is served from `op`'s own local cache in ~2ms. That cost is paid per invocation, so direnv pays it again on every entry into a directory.
 
-If [`op-cached`](https://github.com/sylr/op-cached) is on `PATH`, `from_op` uses it instead of `op inject` and reads resolve from the macOS keychain in ~20ms. Nothing else changes: values are byte-identical, and every other option behaves the same.
+If [`op-cached`](https://github.com/sylr/op-cached) is on `PATH`, `from_op` uses it instead of `op inject` and reads resolve from the macOS keychain instead. Measured on a one-variable `.envrc`, entering the directory goes from **0.90s to 0.05s**. Nothing else changes: values are byte-identical, and every other option behaves the same.
 
 ```bash
 brew install --cask sylr/tap/op-cached

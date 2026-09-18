@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0+sylr.1
+
+Fork of [tmatilai/direnv-1password](https://github.com/tmatilai/direnv-1password) 1.2.0.
+
+### Features
+
+- Resolve secrets through [`op-cached`](https://github.com/sylr/op-cached) when it is on `PATH`, falling back to `op inject` otherwise. Values are byte-identical between the two paths.
+- Add `DIRENV_1PASSWORD_NO_CACHE=1` to force the `op inject` path.
+
 ## 1.2.0 / 2026-09-15
 
 ### Features

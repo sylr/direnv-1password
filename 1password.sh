@@ -4,7 +4,7 @@
 # 1Password helpers for direnv configuration.
 #
 # VERSION:
-#    1.2.0
+#    1.2.0+sylr.1
 #
 # HOMEPAGE:
 #     https://github.com/tmatilai/direnv-1password
@@ -25,6 +25,7 @@ from_op() {
     local _op_variables=()
     local _op_files=()
     local _op_options=()
+    local _op_account=""
     local _op_stdin=0
     local _op_overwrite=1
     local _op_verbose=0
@@ -57,6 +58,7 @@ from_op() {
                     return 1
                 fi
                 _op_options+=(--account "$2")
+                _op_account="$2"
                 shift 2
                 ;;
             --*)
@@ -108,6 +110,7 @@ from_op() {
     # marker is what tells the output parser where a value ends.
     local _op_marker="# from_op end ${RANDOM}${RANDOM}"
     local _op_keys=()
+    local _op_refs=()
     local _op_template=""
     local _op_line _op_key
     while IFS= read -r _op_line; do
@@ -129,6 +132,7 @@ from_op() {
         fi
 
         _op_keys+=("$_op_key")
+        _op_refs+=("${_op_line#*=}")
         _op_template+="$_op_line"$'\n'"$_op_marker"$'\n'
     done <<<"$_op_input"
 
@@ -139,8 +143,39 @@ from_op() {
 
     [[ $_op_verbose -eq 0 ]] || log_status "from_op: Loading variables from 1Password"
 
+    # `op-cached` (https://github.com/sylr/op-cached) answers from the macOS
+    # keychain in ~20ms. Every `op` invocation instead spends ~700ms on account
+    # and usage-reporting requests, whether it resolves one reference or twenty,
+    # so caching wins per variable even though `op-cached` takes only one
+    # reference at a time. `op inject` stays the path when it is absent, and
+    # DIRENV_1PASSWORD_NO_CACHE=1 forces it.
     local _op_injected
-    if ! _op_injected="$(printf '%s' "$_op_template" | op inject ${_op_options[@]+"${_op_options[@]}"})"; then
+    if [[ ${DIRENV_1PASSWORD_NO_CACHE:-0} == 0 ]] && has op-cached; then
+        local _op_idx _op_value
+        _op_injected=""
+        for ((_op_idx = 0; _op_idx < ${#_op_keys[@]}; _op_idx++)); do
+            # `&& printf x` guards the trailing newline that command
+            # substitution strips, and propagates failure: a trailing
+            # `; printf x` would hide it behind printf's exit status.
+            if ! _op_value="$(
+                [[ -z $_op_account ]] || export OP_ACCOUNT="$_op_account"
+                op-cached read "${_op_refs[_op_idx]}" && printf x
+            )"; then
+                log_error "from_op: 1Password lookup failed: ${_op_refs[_op_idx]}"
+                return 1
+            fi
+            # `op read`, and so `op-cached read`, appends a newline that
+            # `op inject` does not. Drop exactly one so both paths yield the
+            # same bytes.
+            _op_value="${_op_value%x}"
+            _op_value="${_op_value%$'\n'}"
+            _op_injected+="${_op_keys[_op_idx]}=${_op_value}"$'\n'"$_op_marker"$'\n'
+        done
+        # Command substitution strips trailing newlines from the `op inject`
+        # output, and the parser below relies on that: the here-string adds one
+        # back, so a kept newline would feed it a spurious empty line.
+        _op_injected="${_op_injected%$'\n'}"
+    elif ! _op_injected="$(printf '%s' "$_op_template" | op inject ${_op_options[@]+"${_op_options[@]}"})"; then
         log_error "from_op: 1Password injection failed"
         return 1
     fi

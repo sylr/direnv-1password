@@ -3,8 +3,10 @@
 setup() {
     REPO_ROOT=$(cd "$BATS_TEST_DIRNAME/.." && pwd)
     export OP_ARGS_LOG="$BATS_TEST_TMPDIR/op-args.log"
+    export OP_CACHED_ARGS_LOG="$BATS_TEST_TMPDIR/op-cached-args.log"
     export WATCH_FILE_LOG="$BATS_TEST_TMPDIR/watch-file.log"
     : >"$OP_ARGS_LOG"
+    : >"$OP_CACHED_ARGS_LOG"
     : >"$WATCH_FILE_LOG"
 }
 
@@ -459,4 +461,133 @@ BASH
     [ "$status" -eq 0 ]
     [ "${lines[0]}" = "VERBOSE=first-secret" ]
     [ "${lines[1]}" = "line=other-secret" ]
+}
+
+@test "resolves through op-cached when it is available" {
+    envrc="$BATS_TEST_TMPDIR/envrc"
+    cat >"$envrc" <<'BASH'
+export STUB_OP_CACHED=1
+from_op MY_SECRET=op://vault/item/field
+printf 'MY_SECRET=%s\n' "$MY_SECRET"
+BASH
+
+    run_envrc "$envrc"
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "MY_SECRET=single-secret" ]
+    # op must not be invoked at all when the cache handles the reference.
+    [ ! -s "$OP_ARGS_LOG" ]
+    [ "$(cat "$OP_CACHED_ARGS_LOG")" = "<no-account> op://vault/item/field" ]
+}
+
+@test "resolves every variable through op-cached" {
+    envrc="$BATS_TEST_TMPDIR/envrc"
+    cat >"$envrc" <<'BASH'
+export STUB_OP_CACHED=1
+from_op <<OP
+FIRST_SECRET=op://vault/first/field
+OTHER_SECRET=op://vault/other/field
+OP
+printf 'FIRST_SECRET=%s\n' "$FIRST_SECRET"
+printf 'OTHER_SECRET=%s\n' "$OTHER_SECRET"
+BASH
+
+    run_envrc "$envrc"
+
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = "FIRST_SECRET=first-secret" ]
+    [ "${lines[1]}" = "OTHER_SECRET=other-secret" ]
+    [ "$(wc -l <"$OP_CACHED_ARGS_LOG")" -eq 2 ]
+}
+
+@test "op-cached preserves a multi-line secret exactly" {
+    envrc="$BATS_TEST_TMPDIR/envrc"
+    cat >"$envrc" <<'BASH'
+export STUB_OP_CACHED=1
+from_op MY_KEY=op://vault/multiline/field
+printf '%s' "$MY_KEY" >"$BATS_TEST_TMPDIR/value"
+printf 'OTHER_SECRET=%s\n' "${OTHER_SECRET:-unset}"
+BASH
+
+    run_envrc "$envrc"
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "OTHER_SECRET=unset" ]
+    expected=$'-----BEGIN KEY-----\nline1\n\nOTHER_SECRET=not-a-var\n-----END KEY-----\n'
+    [ "$(cat "$BATS_TEST_TMPDIR/value" && printf x)" = "${expected}x" ]
+}
+
+@test "op-cached preserves leading and trailing whitespace" {
+    envrc="$BATS_TEST_TMPDIR/envrc"
+    cat >"$envrc" <<'BASH'
+export STUB_OP_CACHED=1
+from_op MY_SECRET=op://vault/spaces/field
+printf '[%s]\n' "$MY_SECRET"
+BASH
+
+    run_envrc "$envrc"
+
+    [ "$status" -eq 0 ]
+    [ "$output" = $'[ \tpadded secret \t]' ]
+}
+
+@test "op-cached preserves an empty value" {
+    envrc="$BATS_TEST_TMPDIR/envrc"
+    cat >"$envrc" <<'BASH'
+export STUB_OP_CACHED=1
+from_op MY_SECRET=op://vault/empty/field
+printf '[%s]\n' "$MY_SECRET"
+BASH
+
+    run_envrc "$envrc"
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "[]" ]
+}
+
+@test "DIRENV_1PASSWORD_NO_CACHE forces the op inject path" {
+    envrc="$BATS_TEST_TMPDIR/envrc"
+    cat >"$envrc" <<'BASH'
+export STUB_OP_CACHED=1
+export DIRENV_1PASSWORD_NO_CACHE=1
+from_op MY_SECRET=op://vault/item/field
+printf 'MY_SECRET=%s\n' "$MY_SECRET"
+BASH
+
+    run_envrc "$envrc"
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "MY_SECRET=single-secret" ]
+    [ -s "$OP_ARGS_LOG" ]
+    [ ! -s "$OP_CACHED_ARGS_LOG" ]
+}
+
+@test "selects the account for op-cached through OP_ACCOUNT" {
+    envrc="$BATS_TEST_TMPDIR/envrc"
+    cat >"$envrc" <<'BASH'
+export STUB_OP_CACHED=1
+from_op --account my-team MY_SECRET=op://vault/item/field
+printf 'MY_SECRET=%s\n' "$MY_SECRET"
+BASH
+
+    run_envrc "$envrc"
+
+    [ "$status" -eq 0 ]
+    [ "$output" = "MY_SECRET=single-secret" ]
+    [ "$(cat "$OP_CACHED_ARGS_LOG")" = "my-team op://vault/item/field" ]
+}
+
+@test "reports a failure from op-cached" {
+    envrc="$BATS_TEST_TMPDIR/envrc"
+    cat >"$envrc" <<'BASH'
+export STUB_OP_CACHED=1
+from_op MY_SECRET=op://vault/missing/field
+printf 'should not get here\n'
+BASH
+
+    run_envrc "$envrc"
+
+    [ "$status" -ne 0 ]
+    [[ $output == *"1Password lookup failed: op://vault/missing/field"* ]]
+    [[ $output != *"should not get here"* ]]
 }

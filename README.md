@@ -2,6 +2,8 @@
 
 This repository includes a [direnv](https://direnv.net) library/extension for fetching secrets using [1Password CLI](https://support.1password.com/command-line/).
 
+> **This is a fork of [tmatilai/direnv-1password](https://github.com/tmatilai/direnv-1password)**, adding transparent caching through [`op-cached`](https://github.com/sylr/op-cached). See [Caching](#caching). Everything else behaves exactly as upstream.
+
 ---
 
 ## Usage
@@ -10,8 +12,8 @@ Example `.envrc`:
 
 ```bash
 # Download the latest version. See below for other installation methods.
-source_url "https://github.com/tmatilai/direnv-1password/raw/v1.2.0/1password.sh" \
-    "sha256-VdJ5Z1ePvN21r3mk533kRdEgbJz9peGv32ZxhMSkXt4="
+source_url "https://github.com/sylr/direnv-1password/raw/v1.2.0+sylr.1/1password.sh" \
+    "sha256-VdFCutASAHGAE5OZWRK/liImAp4V/q4bZ/Vg6d62N98="
 
 # Fetch one secret and export it into the specified environment variable
 from_op MY_SECRET=op://vault/item/field
@@ -69,17 +71,37 @@ Running `op signin` inside `.envrc` does not work, as there is no terminal to ty
 
 ---
 
+## Caching
+
+Every `op` invocation costs roughly a second, and almost none of it is the secret. `op --debug read` shows three server requests — `GET /api/v2/overview`, `GET /api/v3/account` and `POST /api/v3/user/itemusage`, about 720ms together — while the item itself is served from `op`'s own local cache in ~2ms. That cost is paid per invocation, so direnv pays it again on every entry into a directory.
+
+If [`op-cached`](https://github.com/sylr/op-cached) is on `PATH`, `from_op` uses it instead of `op inject` and reads resolve from the macOS keychain in ~20ms. Nothing else changes: values are byte-identical, and every other option behaves the same.
+
+```bash
+brew install --cask sylr/tap/op-cached
+```
+
+Two things worth knowing:
+
+- `op-cached` resolves one reference at a time, so with several variables a cold cache costs one `op` invocation each, where `op inject` would have cost one in total. It is a one-off per TTL (12h by default), and from the second direnv entry onwards the cached path is far ahead.
+- A cached value stays served until its TTL expires, so after rotating a secret run `op-cached purge`.
+
+Set `DIRENV_1PASSWORD_NO_CACHE=1` to force the `op inject` path even when `op-cached` is installed.
+
+---
+
 ## Requirements
 
 - [direnv](https://direnv.net). Might/should work with any somehow recent v2 version. Developed initially with v2.30.
 - [1Password CLI 2.x](https://support.1password.com/command-line/) (`op`).
 - Bash 3.2 or newer. Tested in CI with Bash 3.2, 4.4 and 5.
+- Optionally [`op-cached`](https://github.com/sylr/op-cached), for [caching](#caching). macOS only.
 
 ---
 
 ## Installation
 
-There are a couple of options to use/install the library. Upgrades must be done manually. Watch [the repository](https://github.com/tmatilai/direnv-1password) for new versions.
+There are a couple of options to use/install the library. Upgrades must be done manually. Watch [the repository](https://github.com/sylr/direnv-1password) for new versions.
 
 ### Use `source_url` stdlib command
 
@@ -90,7 +112,7 @@ The latest version can be fetched with the command in [the usage example](#usage
 Hash for another version can be fetched with the [`direnv fetchurl`](https://direnv.net/man/direnv-fetchurl.1.html) command in shell:
 
 ```bash
-direnv fetchurl "https://github.com/tmatilai/direnv-1password/raw/<VERSION>/1password.sh"
+direnv fetchurl "https://github.com/sylr/direnv-1password/raw/<VERSION>/1password.sh"
 ```
 
 Note that as stated in the direnv documentation, the downloaded file is cached, and thus the URL should return always the same version. This means that `main` and other branches can not be used.
